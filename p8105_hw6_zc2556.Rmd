@@ -1,0 +1,394 @@
+---
+title: "P8105-hw6-zc2556"
+author: "Zhe Chen"
+date: "2020/11/30"
+output: github_document
+---
+
+## Problem 1
+
+### Libraries and Basics
+
+```{r, warning=FALSE, include=FALSE}
+library(tidyverse)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+
+theme_set(
+  theme_minimal()+
+  theme(legend.position = "bottom")
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continous.fill = "viridis"
+)
+
+scale_color_discrete = scale_colour_viridis_d()
+scale_fill_discrete = scale_fill_viridis_d
+
+```
+
+### Import and Clean the Data Set
+
+```{r}
+#read in the dataset
+homoicide = 
+  read_csv("./homicide-data.csv", na = c("", "NA", "Unknown")) %>%
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    victim_age = as.numeric(victim_age),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ 0,
+      disposition == "Open/No arrest"        ~ 0,
+      disposition == "Closed by arrest"      ~ 1
+    )
+  ) %>%
+  filter(
+    victim_race %in% c("White", "Black"),
+    city_state != "Tulsa_AL"
+    ) %>%
+  select(
+    city_state, resolution, victim_age, victim_race, victim_sex
+  )
+```
+
+Start with one city
+
+```{r}
+baltimore = 
+  homoicide %>%
+  filter(city_state == "Baltimore, MD")
+
+glm(resolution ~ victim_age + victim_race + victim_sex, data = baltimore,
+    family = binomial()) %>%
+  broom::tidy() %>%
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96*std.error),
+    CI_upper = exp(estimate + 1.96*std.error)
+  ) %>%
+  select(Term, OR, starts_with("CI")) %>%
+  knitr::kable(digits = 3)
+```
+
+Across cities
+
+```{r}
+#using map to apply for each city
+model_results = homoicide %>%
+  nest(data = - city_state) %>%
+  mutate(
+    models = 
+      map(.x = data, ~glm(resolution ~victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    results = map(models, broom::tidy)
+  ) %>%
+  select(
+    city_state, results
+  ) %>%
+  unnest(results)
+
+```
+
+Plot
+
+```{r}
+results %>%
+  mutate(city_state = fct_reorder(city_state, estimate)) %>%
+  ggplot(aes(x = city_state, y = estimate)) +
+  geom_point()+
+  geom_errorbar(ymin = results$conf.low, ymax = results$conf.high)+
+  theme(axis.text = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+
+## Problem 2
+
+### Import Data Sets with Iteration
+
+```{r, warning= FALSE, message=FALSE}
+#store file paths of the control data sets
+path_con = 
+  str_c("./data/", list.files("data", pattern = "con"))
+
+#store file paths of the experiment data sets 
+path_exp = 
+  str_c("./data/", list.files("data", pattern = "exp"))
+
+#import both controls and experiments into a single data set
+long_data = 
+  tibble(
+    control = map(path_con, read_csv),
+    experiment = map(path_exp, read_csv)
+  )
+
+path_con = 
+  str_c("./data/", list.files("data", pattern = "con"))
+
+path_exp = 
+  str_c("./data/", list.files("data", pattern = "exp"))
+
+long_data = 
+  tibble(
+    control = map(path_con, read_csv),
+    experiment = map(path_exp, read_csv)
+  )
+```
+
+### Make the Data Tidy
+
+```{r, message=FALSE}
+#make it tidy
+long_data_tidy = 
+  long_data %>%
+  mutate(
+    subject_id = 1:10
+  ) %>%
+  pivot_longer(
+    control:experiment,
+    names_to = "arm"
+  ) %>%
+  unnest() %>%
+  pivot_longer(
+    week_1:week_8,
+    names_to = "week",
+    names_prefix = "week_",
+    values_to = "observations"
+  )
+
+long_data_tidy
+```
+
+### Plot
+
+```{r}
+long_data_tidy %>%
+  mutate(subject_id = as.factor(subject_id),
+         week = as.factor(week)
+         ) %>%
+  ggplot(aes(x = week, y = observations, group = subject_id, color = subject_id)) +
+  geom_path()+
+  facet_grid(~arm) +
+  labs(
+    title = "Observations over 8 Weeks by Treatment Groups",
+    x = "Week",
+    y = "Observations"
+  ) + 
+  theme(legend.position = "bottom")
+  
+```
+
+We made a spaghetti plot to show the observations on each subject over time to compare the effect of the treatment. In control group, we don't observe a strong trend and the change of observations for 8 weeks seems to be random. However, for the experiment group, we can observe a clearly increasing tread, showing the treatment should have some effect compared to the control.   
+
+
+## Problem 3
+
+```{r}
+#set up 
+set.seed(621)
+n_ent = 30
+sigm_ent = 5
+
+#function to find the estimated mean and p-value
+sim_mean_p = function(n, mu, sigm) {
+  x = rnorm(n, mean = mu, sd = sigm)
+  t = broom::tidy(t.test(x))
+  fun_res = tibble(
+    mu_hat = t$estimate,
+    p_value = t$p.value
+    )
+  return(fun_res)
+}
+
+```
+
+
+5000 for mu = 0
+
+```{r}
+#function to stimulate for 5000 times 
+stimulate = function(mu) {
+  output_mu= vector("list", 5000)
+  for(i in 1:5000) {
+    output_mu[[i]] = sim_mean_p(n_ent, mu, sigm_ent)
+  }
+  sim_result = bind_rows(output_mu)
+  return(sim_result)
+}
+
+#when mu = 0
+mu0 = stimulate(0)
+mu0
+```
+
+Proportion of Rejecting the Null based on 0.05 alpha when mu = 0.
+
+```{r}
+#function to find the proportion of rejecting the null
+test = function(stimulate_data, true_mu) {
+  sim_reject = 
+    stimulate_data %>%
+      filter(p_value < 0.05) %>%
+      summarise(
+        prop_reject = n()/5000
+      )
+  mu =
+    tibble(
+      true_mu = true_mu
+    )
+  sim_reject = bind_cols(sim_reject, mu)
+  return(sim_reject)
+}
+
+#for mu = 0 
+test(mu0,0)
+```
+
+### Plot the Proportion of Reject VS True Mean
+
+Apply functions 
+```{r}
+#make a data frame including mu = 1-6
+for (i in 1:6) {
+  assign(paste0("mu", i), stimulate(i))
+}
+```
+
+Make a table for plotting
+```{r}
+#make a data frames including the proportion and true means
+mu_all = list(mu0,mu1,mu2,mu3,mu4,mu5,mu6)
+for (i in 1:7) {
+  assign(paste0("prop_table", i), test(as.data.frame(mu_all[i]),i))
+}
+prop_table = bind_rows(prop_table1, prop_table2, prop_table3, prop_table4, prop_table5, prop_table6, prop_table7) %>%
+  mutate(
+    true_mu = true_mu - 1
+  )
+prop_table
+```
+
+Plot
+
+```{r}
+prop_table %>%
+  ggplot(aes(x = as.factor(true_mu), y = prop_reject, group  = 1)) +
+  geom_point() +
+  geom_line() +
+  ylim (0,1) +
+  geom_text(aes(label = prop_reject, hjust = 0, vjust = 0.5, angle = -25))+
+  labs(
+    title = "5000 Times of Stimulation for 6 Means",
+    x = "True Mean",
+    y = "Proportion of Rejection Times"
+  ) + 
+  
+  theme(legend.position = "bottom")
+```
+
+From the plot, we can observe a increasing trend while the true mean increases from 0 to 6 and the proportion of rejection times approaches to 1. From the plot, we can conclude that the much more different of the alternative hypothesis (larger mean in this case), the more powerful of the test (greater proportion of rejection times). While the mean of the tested mean is the same as the null, the proportion of rejection times is pretty close to the level of significance (0.05 in our case). 
+
+### Plot the Average Estimate of mu VS True Mean
+
+```{r}
+#find the average estimate of mu
+find_av = function(stimulate_data, true_mu) {
+  av_est = 
+    stimulate_data %>%
+      summarise(
+        mu_bar = round(mean(mu_hat),digits = 4)
+      )
+  mu =
+    tibble(
+      true_mu = true_mu
+    )
+  av_est = bind_cols(av_est, mu)
+  return(av_est)
+}
+
+#create table of the average of estimates
+for (i in 1:7) {
+  assign(paste0("av_est", i), find_av(as.data.frame(mu_all[i]),i))
+}
+av_est = bind_rows(av_est1, av_est2, av_est3, av_est4, av_est5, av_est6, av_est7) %>%
+  mutate(
+    true_mu = true_mu - 1
+  )
+av_est  
+```
+
+Plot
+
+```{r}
+av_est %>%
+  ggplot(aes(x = as.factor(true_mu), y = mu_bar, group  = 1)) +
+  geom_point() +
+  geom_line() +
+  geom_text(aes(label = mu_bar, hjust = 0, vjust = 1.1))+
+  labs(
+    title = "5000 Times of Stimulation for 6 Means",
+    x = "True Mean",
+    y = "Average of Estimated Mean"
+  ) + 
+  
+  theme(legend.position = "bottom")
+```
+
+From the plot, we can clearly observe a nearly perfect linear relation between the average of estimated means and the true mean, showing that the average of estimated means is equal to the true mean. Thus, we are confident to estimate the true mean with the sample mean when the number of simulation times is large enough. 
+
+### Plot the Average Estimate (rejected) of mu VS True Mean
+
+```{r}
+#find the average estimate of mu (rejected)
+find_av_rej = function(stimulate_data, true_mu) {
+  av_est_rej = 
+    stimulate_data %>%
+      filter(p_value < 0.05) %>%
+      summarise(
+        mu_bar_rej = round(mean(mu_hat),digits = 4)
+      )
+  mu =
+    tibble(
+      true_mu = true_mu
+    )
+  av_est_rej = bind_cols(av_est_rej, mu)
+  return(av_est_rej)
+}
+
+#create table of the average of estimates (rejected)
+for (i in 1:7) {
+  assign(paste0("av_est_rej", i), find_av_rej(as.data.frame(mu_all[i]),i))
+}
+av_est_rej = bind_rows(av_est_rej1, av_est_rej2, av_est_rej3, av_est_rej4, av_est_rej5, av_est_rej6, av_est_rej7) %>%
+  mutate(
+    true_mu = true_mu - 1
+  )
+av_est_rej  
+```
+
+Plot
+
+```{r}
+av_est_rej %>%
+  ggplot(aes(x = as.factor(true_mu), y = mu_bar_rej, group  = 1)) +
+  geom_point() +
+  geom_line() +
+  geom_text(aes(label = mu_bar_rej, hjust = 0, vjust = 1.1))+
+  labs(
+    title = "5000 Times of Stimulation for 6 Means (Rejected)",
+    x = "True Mean",
+    y = "Average of Estimated Mean (Rejected)"
+  ) + 
+  theme(legend.position = "bottom")
+```
+
+From the plot, we don't observe a nearly perfect linear relation between the rejected average of estimated means and the true mean. When the true mean is 0, 3, 4, 5, 6, the average of estimated rejected means is  close to the true mean. When is 1 or 2, the average of estimated rejected means is not close to the true mean. This is consistent with the plot of the true mean vs proportion of rejections times, showing that the more powerful the test, the more accurate of the estimation from the rejected means. 
+
+
+
+
