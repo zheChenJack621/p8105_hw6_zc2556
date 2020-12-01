@@ -143,7 +143,7 @@ While checking the data frame, we noticed there existed some plausible values in
 ```{r}
 #fit the regression model for birthweight
 birthw_model = 
-  lm(bwt~ ., data = birthweight)
+  lm(bwt~ fincome + babysex + bhead + blength + gaweeks, data = birthweight)
 summary(birthw_model)
 ```
 
@@ -199,6 +199,7 @@ summary(birthw_model_head)
 Comparison: 
 
 ```{r}
+#prepare trainning and testing data sets
 cv_df =
   crossv_mc(birthweight, 100) %>% 
   mutate(
@@ -207,41 +208,36 @@ cv_df =
 ```
 
 ```{r}
+#calculate MSE
 cv_df_test = 
   cv_df %>% 
   mutate(
-    my_mod  = map(train, ~lm(bwt~ ., data = .x)),
-    len_mod     = map(train, ~lm(bwt~ blength + momage, data = .x)),
-    head_mod  = map(train, ~lm(bwt~ blength + babysex + bhead + blength*babysex*bhead, data = .x))
+    my_mod  = map(train, ~lm(bwt~ fincome + babysex + bhead + blength + gaweeks, data = .x)),
+    len_mod = map(train, ~lm(bwt~ blength + momage, data = .x)),
+    head_mod = map(train, ~lm(bwt~ blength + babysex + bhead + blength*babysex*bhead, data = .x))
     ) %>% 
   mutate(
     rmse_my = map2_dbl(my_mod, test, ~rmse(model = .x, data = .y)),
-    rmse_len  = map2_dbl(len_mod, test, ~rmse(model = .x, data = .y)),
-    rmse_head = map2_dbl(head_mod, test, ~rmse(model = .x, data = .y)))
+    rmse_len = map2_dbl(len_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_head = map2_dbl(head_mod, test, ~rmse(model = .x, data = .y))
+    )
 ```
 
-
-
-### Plot
+Plot
 
 ```{r}
-long_data_tidy %>%
-  mutate(subject_id = as.factor(subject_id),
-         week = as.factor(week)
-         ) %>%
-  ggplot(aes(x = week, y = observations, group = subject_id, color = subject_id)) +
-  geom_path()+
-  facet_grid(~arm) +
-  labs(
-    title = "Observations over 8 Weeks by Treatment Groups",
-    x = "Week",
-    y = "Observations"
-  ) + 
-  theme(legend.position = "bottom")
-  
+cv_df_test %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
 ```
 
-We made a spaghetti plot to show the observations on each subject over time to compare the effect of the treatment. In control group, we don't observe a strong trend and the change of observations for 8 weeks seems to be random. However, for the experiment group, we can observe a clearly increasing tread, showing the treatment should have some effect compared to the control.   
+We made a violin plot to compare the prediction error of three models. My model has a low prediction error compared the other two models. Thus, among these three models, my model (fincome + babysex + bhead + blength + gaweeks) is the best. 
 
 
 ## Problem 3
