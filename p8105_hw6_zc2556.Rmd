@@ -13,6 +13,7 @@ output: github_document
 library(tidyverse)
 library(modelr)
 library(mgcv)
+set.seed(621)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -134,8 +135,9 @@ birthweight =
 
 While checking the data frame, we noticed there existed some plausible values in the data set:
  
- * We have one 0 value in column "menarche", representing the mother’s age at menarche is 0. We could consider it as a missing value but since there might be some special cases, we decided to keep it in our data set.
- * Since we only have one value (0), in column "pnumlbw" and "pnumsga", we decided to exclude these two columns for the conveniance of constructing model.
+We have one 0 value in column "menarche", representing the mother’s age at menarche is 0. We could consider it as a missing value but since there might be some special cases, we decided to keep it in our data set.
+
+Since we only have one value (0), in column "pnumlbw" and "pnumsga", we decided to exclude these two columns for the conveniance of constructing model.
 
 
 ### Model building
@@ -234,214 +236,152 @@ cv_df_test %>%
     values_to = "rmse",
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
-  ggplot(aes(x = model, y = rmse)) + geom_violin()
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin()+
+  labs(
+    title = "Comparision of Three Linear Models",
+    x = "Model",
+    y = "RMSE"
+  ) + 
+  
+  theme(legend.position = "bottom")
 ```
 
-We made a violin plot to compare the prediction error of three models. My model has a low prediction error compared the other two models. Thus, among these three models, my model (fincome + babysex + bhead + blength + gaweeks) is the best. 
+
+We made a violin plot to compare the prediction error of three models. My model has a low prediction error compared the other two models. Thus, among these three models, my model (fincome, babysex, bhead, blength, gaweeks) is the best. 
 
 
 ## Problem 3
 
 ```{r}
-#set up 
-set.seed(621)
-n_ent = 30
-sigm_ent = 5
-
-#function to find the estimated mean and p-value
-sim_mean_p = function(n, mu, sigm) {
-  x = rnorm(n, mean = mu, sd = sigm)
-  t = broom::tidy(t.test(x))
-  fun_res = tibble(
-    mu_hat = t$estimate,
-    p_value = t$p.value
-    )
-  return(fun_res)
-}
-
-```
-
-
-5000 for mu = 0
-
-```{r}
-#function to stimulate for 5000 times 
-stimulate = function(mu) {
-  output_mu= vector("list", 5000)
-  for(i in 1:5000) {
-    output_mu[[i]] = sim_mean_p(n_ent, mu, sigm_ent)
-  }
-  sim_result = bind_rows(output_mu)
-  return(sim_result)
-}
-
-#when mu = 0
-mu0 = stimulate(0)
-mu0
-```
-
-Proportion of Rejecting the Null based on 0.05 alpha when mu = 0.
-
-```{r}
-#function to find the proportion of rejecting the null
-test = function(stimulate_data, true_mu) {
-  sim_reject = 
-    stimulate_data %>%
-      filter(p_value < 0.05) %>%
-      summarise(
-        prop_reject = n()/5000
-      )
-  mu =
-    tibble(
-      true_mu = true_mu
-    )
-  sim_reject = bind_cols(sim_reject, mu)
-  return(sim_reject)
-}
-
-#for mu = 0 
-test(mu0,0)
-```
-
-### Plot the Proportion of Reject VS True Mean
-
-Apply functions 
-```{r}
-#make a data frame including mu = 1-6
-for (i in 1:6) {
-  assign(paste0("mu", i), stimulate(i))
-}
-```
-
-Make a table for plotting
-```{r}
-#make a data frames including the proportion and true means
-mu_all = list(mu0,mu1,mu2,mu3,mu4,mu5,mu6)
-for (i in 1:7) {
-  assign(paste0("prop_table", i), test(as.data.frame(mu_all[i]),i))
-}
-prop_table = bind_rows(prop_table1, prop_table2, prop_table3, prop_table4, prop_table5, prop_table6, prop_table7) %>%
+#include dataset 
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
   mutate(
-    true_mu = true_mu - 1
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+```
+
+
+5000 for bootstrap
+
+```{r}
+#function of bootstrap
+boot_sample = function(df) {
+  sample_frac(df, replace = TRUE)
+}
+
+#bootstrap for 5000
+boot_straps = 
+  data_frame(
+    strap_number = 1:5000,
+    strap_sample = rerun(5000, boot_sample(weather_df))
   )
-prop_table
+
+boot_straps
 ```
 
-Plot
+Bootstrap and model building
 
 ```{r}
-prop_table %>%
-  ggplot(aes(x = as.factor(true_mu), y = prop_reject, group  = 1)) +
-  geom_point() +
-  geom_line() +
-  ylim (0,1) +
-  geom_text(aes(label = prop_reject, hjust = 0, vjust = 0.5, angle = -25))+
-  labs(
-    title = "5000 Times of Stimulation for 6 Means",
-    x = "True Mean",
-    y = "Proportion of Rejection Times"
-  ) + 
-  
-  theme(legend.position = "bottom")
-```
-
-From the plot, we can observe a increasing trend while the true mean increases from 0 to 6 and the proportion of rejection times approaches to 1. From the plot, we can conclude that the much more different of the alternative hypothesis (larger mean in this case), the more powerful of the test (greater proportion of rejection times). While the mean of the tested mean is the same as the null, the proportion of rejection times is pretty close to the level of significance (0.05 in our case). 
-
-### Plot the Average Estimate of mu VS True Mean
-
-```{r}
-#find the average estimate of mu
-find_av = function(stimulate_data, true_mu) {
-  av_est = 
-    stimulate_data %>%
-      summarise(
-        mu_bar = round(mean(mu_hat),digits = 4)
-      )
-  mu =
-    tibble(
-      true_mu = true_mu
-    )
-  av_est = bind_cols(av_est, mu)
-  return(av_est)
-}
-
-#create table of the average of estimates
-for (i in 1:7) {
-  assign(paste0("av_est", i), find_av(as.data.frame(mu_all[i]),i))
-}
-av_est = bind_rows(av_est1, av_est2, av_est3, av_est4, av_est5, av_est6, av_est7) %>%
+#find rsquared
+bootstrap_results = 
+  boot_straps %>% 
   mutate(
-    true_mu = true_mu - 1
+    models = map(strap_sample, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance)) %>% 
+  select(-strap_sample, -models) %>%
+  unnest(results) %>%
+  select(
+    strap_number, r.squared
   )
-av_est  
 ```
 
-Plot
-
 ```{r}
-av_est %>%
-  ggplot(aes(x = as.factor(true_mu), y = mu_bar, group  = 1)) +
-  geom_point() +
-  geom_line() +
-  geom_text(aes(label = mu_bar, hjust = 0, vjust = 1.1))+
-  labs(
-    title = "5000 Times of Stimulation for 6 Means",
-    x = "True Mean",
-    y = "Average of Estimated Mean"
-  ) + 
-  
-  theme(legend.position = "bottom")
-```
-
-From the plot, we can clearly observe a nearly perfect linear relation between the average of estimated means and the true mean, showing that the average of estimated means is equal to the true mean. Thus, we are confident to estimate the true mean with the sample mean when the number of simulation times is large enough. 
-
-### Plot the Average Estimate (rejected) of mu VS True Mean
-
-```{r}
-#find the average estimate of mu (rejected)
-find_av_rej = function(stimulate_data, true_mu) {
-  av_est_rej = 
-    stimulate_data %>%
-      filter(p_value < 0.05) %>%
-      summarise(
-        mu_bar_rej = round(mean(mu_hat),digits = 4)
-      )
-  mu =
-    tibble(
-      true_mu = true_mu
-    )
-  av_est_rej = bind_cols(av_est_rej, mu)
-  return(av_est_rej)
-}
-
-#create table of the average of estimates (rejected)
-for (i in 1:7) {
-  assign(paste0("av_est_rej", i), find_av_rej(as.data.frame(mu_all[i]),i))
-}
-av_est_rej = bind_rows(av_est_rej1, av_est_rej2, av_est_rej3, av_est_rej4, av_est_rej5, av_est_rej6, av_est_rej7) %>%
+#find coefficient
+bootstrap_results_coef = 
+  boot_straps %>% 
   mutate(
-    true_mu = true_mu - 1
+    models = map(strap_sample, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy)) %>% 
+  select(-strap_sample, -models) %>%
+  unnest(results) %>%
+  select(
+    strap_number, term, estimate
+  ) %>%
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
   )
-av_est_rej  
 ```
 
-Plot
+```{r}
+#merge two dataset
+bootstrap_results_all = 
+  merge(bootstrap_results, bootstrap_results_coef, by = "strap_number")
+bootstrap_results_all = 
+  bootstrap_results_all %>%
+  mutate(
+    log_beta0_beta1 = log(bootstrap_results_all[,3]*tmin)
+  ) %>%
+  select(
+    strap_number, r.squared, log_beta0_beta1
+  )
+
+head(bootstrap_results_all)
+```
+
+### Plot
 
 ```{r}
-av_est_rej %>%
-  ggplot(aes(x = as.factor(true_mu), y = mu_bar_rej, group  = 1)) +
-  geom_point() +
-  geom_line() +
-  geom_text(aes(label = mu_bar_rej, hjust = 0, vjust = 1.1))+
+bootstrap_results_all %>%
+  ggplot(aes(x =  r.squared)) +
+  geom_density() +
   labs(
-    title = "5000 Times of Stimulation for 6 Means (Rejected)",
-    x = "True Mean",
-    y = "Average of Estimated Mean (Rejected)"
+    title = "Plot of R Squared Estimates for Bootstrap with Size of 5000",
+    x = "Estimate of R Squared",
+    y = "Density"
   ) + 
   theme(legend.position = "bottom")
 ```
 
-From the plot, we don't observe a nearly perfect linear relation between the rejected average of estimated means and the true mean. When the true mean is 0, 3, 4, 5, 6, the average of estimated rejected means is  close to the true mean. When is 1 or 2, the average of estimated rejected means is not close to the true mean. This is consistent with the plot of the true mean vs proportion of rejections times, showing that the more powerful the test, the more accurate of the estimation from the rejected means. 
+```{r}
+bootstrap_results_all %>%
+  ggplot(aes(x = log_beta0_beta1)) +
+  geom_density() +
+  labs(
+    title = "Plot of log coefficient Estimates for Bootstrap with Size of 5000",
+    x = "Estimate of Log(beta0*beta1)",
+    y = "Density"
+  ) + 
+  theme(legend.position = "bottom")
+```
+We can observe a normal distribution for the both plots.
+
+### find the CI
+
+```{r}
+#tidy the data 
+bootstrap_results_all %>%
+  pivot_longer(
+    r.squared:log_beta0_beta1,
+    names_to = "term",
+    values_to = "estimate"
+  ) %>%
+  group_by(term) %>% 
+  summarize(
+    ci_lower = quantile(estimate, 0.025), 
+    ci_upper = quantile(estimate, 0.975))
+```
+
+
 
 
 
