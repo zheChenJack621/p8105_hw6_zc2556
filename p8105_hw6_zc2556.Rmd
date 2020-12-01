@@ -5,7 +5,7 @@ date: "2020/11/30"
 output: github_document
 ---
 
-## Problem 1
+
 
 ### Libraries and Basics
 
@@ -33,76 +33,78 @@ scale_fill_discrete = scale_fill_viridis_d
 
 ```
 
-### Import and Clean the Data Set
+## Problem 1
 
 ```{r}
 #read in the dataset
-homoicide = 
-  read_csv("./homicide-data.csv", na = c("", "NA", "Unknown")) %>%
+homicide_df = 
+  read_csv("./homicide-data.csv", na = c("", "NA", "Unknown")) %>% 
   mutate(
     city_state = str_c(city, state, sep = ", "),
     victim_age = as.numeric(victim_age),
     resolution = case_when(
       disposition == "Closed without arrest" ~ 0,
       disposition == "Open/No arrest"        ~ 0,
-      disposition == "Closed by arrest"      ~ 1
-    )
-  ) %>%
+      disposition == "Closed by arrest"      ~ 1)
+  ) %>% 
   filter(
     victim_race %in% c("White", "Black"),
-    city_state != "Tulsa_AL"
-    ) %>%
-  select(
-    city_state, resolution, victim_age, victim_race, victim_sex
-  )
+    city_state != "Tulsa, AL") %>% 
+  select(city_state, resolution, victim_age, victim_race, victim_sex)
 ```
 
 Start with one city
 
 ```{r}
-baltimore = 
-  homoicide %>%
+baltimore_df =
+  homicide_df %>% 
   filter(city_state == "Baltimore, MD")
-
-glm(resolution ~ victim_age + victim_race + victim_sex, data = baltimore,
-    family = binomial()) %>%
-  broom::tidy() %>%
+#build the model
+glm(resolution ~ victim_age + victim_race + victim_sex, 
+    data = baltimore_df,
+    family = binomial()) %>% 
+  broom::tidy() %>% 
   mutate(
     OR = exp(estimate),
-    CI_lower = exp(estimate - 1.96*std.error),
-    CI_upper = exp(estimate + 1.96*std.error)
-  ) %>%
-  select(Term, OR, starts_with("CI")) %>%
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(Term, OR, starts_with("CI")) %>% 
   knitr::kable(digits = 3)
 ```
 
 Across cities
 
 ```{r}
-#using map to apply for each city
-model_results = homoicide %>%
-  nest(data = - city_state) %>%
+models_results_df = 
+  homicide_df %>% 
+  nest(data = -city_state) %>% 
   mutate(
     models = 
-      map(.x = data, ~glm(resolution ~victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+      map(.x = data, ~glm(resolution ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
     results = map(models, broom::tidy)
-  ) %>%
-  select(
-    city_state, results
-  ) %>%
-  unnest(results)
+  ) %>% 
+  select(city_state, results) %>% 
+  unnest(results) %>% 
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>% 
+  select(city_state, term, OR, starts_with("CI")) 
 
 ```
 
-Plot
+plot
 
 ```{r}
-results %>%
-  mutate(city_state = fct_reorder(city_state, estimate)) %>%
-  ggplot(aes(x = city_state, y = estimate)) +
-  geom_point()+
-  geom_errorbar(ymin = results$conf.low, ymax = results$conf.high)+
-  theme(axis.text = element_text(angle = 90, vjust = 0.5, hjust = 1))
+models_results_df %>% 
+  filter(term == "victim_sexMale") %>% 
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 ```
 
@@ -112,32 +114,7 @@ results %>%
 ### Import Data Sets with Iteration
 
 ```{r, warning= FALSE, message=FALSE}
-#store file paths of the control data sets
-path_con = 
-  str_c("./data/", list.files("data", pattern = "con"))
 
-#store file paths of the experiment data sets 
-path_exp = 
-  str_c("./data/", list.files("data", pattern = "exp"))
-
-#import both controls and experiments into a single data set
-long_data = 
-  tibble(
-    control = map(path_con, read_csv),
-    experiment = map(path_exp, read_csv)
-  )
-
-path_con = 
-  str_c("./data/", list.files("data", pattern = "con"))
-
-path_exp = 
-  str_c("./data/", list.files("data", pattern = "exp"))
-
-long_data = 
-  tibble(
-    control = map(path_con, read_csv),
-    experiment = map(path_exp, read_csv)
-  )
 ```
 
 ### Make the Data Tidy
