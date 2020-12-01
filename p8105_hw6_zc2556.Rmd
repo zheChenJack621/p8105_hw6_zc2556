@@ -11,6 +11,8 @@ output: github_document
 
 ```{r, warning=FALSE, include=FALSE}
 library(tidyverse)
+library(modelr)
+library(mgcv)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -69,7 +71,7 @@ glm(resolution ~ victim_age + victim_race + victim_sex,
     CI_lower = exp(estimate - 1.96 * std.error),
     CI_upper = exp(estimate + 1.96 * std.error)
   ) %>% 
-  select(Term, OR, starts_with("CI")) %>% 
+  select(term, OR, starts_with("CI")) %>% 
   knitr::kable(digits = 3)
 ```
 
@@ -111,35 +113,114 @@ models_results_df %>%
 
 ## Problem 2
 
-### Import Data Sets with Iteration
+### Import and clean the data 
 
 ```{r, warning= FALSE, message=FALSE}
-
+birthweight = 
+  read_csv("./birthweight.csv") %>%
+  drop_na() %>%
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    malform = as.factor(malform),
+    mrace = as.factor(mrace),
+    parity = as.factor(parity)
+  ) %>%
+  #exclude variables with only one level
+  select(
+    -pnumlbw, -pnumsga
+  )
 ```
 
-### Make the Data Tidy
+While checking the data frame, we noticed there existed some plausible values in the data set:
+ 
+ * We have one 0 value in column "menarche", representing the mother’s age at menarche is 0. We could consider it as a missing value but since there might be some special cases, we decided to keep it in our data set.
+ * Since we only have one value (0), in column "pnumlbw" and "pnumsga", we decided to exclude these two columns for the conveniance of constructing model.
+
+
+### Model building
+
+```{r}
+#fit the regression model for birthweight
+birthw_model = 
+  lm(bwt~ ., data = birthweight)
+summary(birthw_model)
+```
+
+From the summary, we are quite confident for our model because both R-squared and adjusted R-squared are high (>0.5). Since variable "wtgain" doesn't effect the model building, terms are shown in "NA". 
+
+```{r}
+birthw_model_result =
+  birthw_model %>% 
+    broom::tidy() %>% 
+    select(term, estimate, p.value) %>%
+    filter(p.value <= 0.05) %>%
+    knitr::kable(digits = 3)
+
+#make a tidy result
+birthw_model_result
+```
+
+We made a tidy result including all statistical significant variables and presented above.
+
+### Plot
+
+```{r}
+birthweight %>%
+  modelr::add_residuals(birthw_model) %>%
+  modelr::add_predictions(birthw_model) %>%
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point() +
+  geom_abline(intercept = 0, slope = 0, linetype = "dashed", color = "red")
+```
+
+In general, from the residuals vs fitted plot, since the majority of points bounces randomly above and below the reference line, we are quite confident that the linear assumption is satisfied. However, we can spot some outliers.   
+
+### Model Comparisions
+
+build two other models
+
+Model with length and mom age:
 
 ```{r, message=FALSE}
-#make it tidy
-long_data_tidy = 
-  long_data %>%
-  mutate(
-    subject_id = 1:10
-  ) %>%
-  pivot_longer(
-    control:experiment,
-    names_to = "arm"
-  ) %>%
-  unnest() %>%
-  pivot_longer(
-    week_1:week_8,
-    names_to = "week",
-    names_prefix = "week_",
-    values_to = "observations"
-  )
-
-long_data_tidy
+birthw_model_len_age =  
+  lm(bwt~ blength + momage, data = birthweight)
+summary(birthw_model_len_age)
 ```
+
+Model with length, head circumference, gender and interaction:
+
+```{r}
+birthw_model_head =
+  lm(bwt~ blength + babysex + bhead + blength*babysex*bhead, data = birthweight)
+summary(birthw_model_head)
+```
+
+Comparison: 
+
+```{r}
+cv_df =
+  crossv_mc(birthweight, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+```
+
+```{r}
+cv_df_test = 
+  cv_df %>% 
+  mutate(
+    my_mod  = map(train, ~lm(bwt~ ., data = .x)),
+    len_mod     = map(train, ~lm(bwt~ blength + momage, data = .x)),
+    head_mod  = map(train, ~lm(bwt~ blength + babysex + bhead + blength*babysex*bhead, data = .x))
+    ) %>% 
+  mutate(
+    rmse_my = map2_dbl(my_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_len  = map2_dbl(len_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_head = map2_dbl(head_mod, test, ~rmse(model = .x, data = .y)))
+```
+
+
 
 ### Plot
 
